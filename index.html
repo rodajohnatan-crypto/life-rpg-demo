@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Life RPG Demo</title>
+<style>
+body { font-family: sans-serif; margin: 0; padding: 0; background-color: #0d1117; color: #c9d1d9; }
+header { background-color: #161b22; padding: 1rem; text-align: center; font-size: 1.5rem; }
+.container { max-width: 800px; margin: 0 auto; padding: 1rem; }
+.stat-bar { height: 12px; background-color: #30363d; border-radius: 6px; overflow: hidden; margin-bottom: 8px; }
+.bar-fill { height: 100%; background-color: #58a6ff; border-radius: 6px; }
+.button { background-color: #238636; border: none; padding: 8px 16px; color: white; cursor: pointer; border-radius: 4px; margin-top: 8px;}
+.quest { border: 1px solid #30363d; border-radius: 8px; padding: 8px; margin-bottom: 12px;}
+.modal { position: fixed; top: 0; left: 0; width: 100%; height:100%; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; }
+.modal-content { background-color: #161b22; padding: 20px; border-radius: 8px; width:90%; max-width:400px; }
+label { display:block; margin-top:8px;}
+input[type=range]{ width:100%; }
+</style>
+</head>
+<body>
+<header>Life RPG Demo</header>
+<div class="container">
+<h2>Stats</h2>
+<p id="level"></p>
+<p id="xp"></p>
+<div>HP: <span id="hpVal"></span>/<span id="hpMax"></span></div>
+<div class="stat-bar"><div id="hpBar" class="bar-fill"></div></div>
+<div>Mana: <span id="manaVal"></span>/<span id="manaMax"></span></div>
+<div class="stat-bar"><div id="manaBar" class="bar-fill" style="background-color:#a371f7;"></div></div>
+<p>Streak: <span id="streak"></span> days</p>
+<button id="checkInBtn" class="button">Check-in</button>
+<h2>Quests</h2>
+<div id="questsContainer"></div>
+</div>
+<!-- Modal for check-in -->
+<div id="checkInModal" class="modal">
+  <div class="modal-content">
+    <h3>Daily Check-in</h3>
+    <label>Physical Energy: <span id="energyVal"></span></label>
+    <input type="range" id="energy" min="0" max="10" value="5">
+    <label>Mental Clarity: <span id="clarityVal"></span></label>
+    <input type="range" id="clarity" min="0" max="10" value="5">
+    <label>Stress: <span id="stressVal"></span></label>
+    <input type="range" id="stress" min="0" max="10" value="5">
+    <button id="submitCheckIn" class="button">Submit</button>
+  </div>
+</div>
+
+<script>
+// Stats stored in localStorage
+function getState() {
+  const defaultState = { xp: 0, hp: 100, hpMax: 100, mana: 100, manaMax: 100, streak: 0, lastCheckIn: null, quests: [] };
+  try { return JSON.parse(localStorage.getItem('lifeRpgState')) || defaultState; } catch { return defaultState; }
+}
+function saveState(state) {
+  localStorage.setItem('lifeRpgState', JSON.stringify(state));
+}
+function updateDisplay() {
+  const st = getState();
+  document.getElementById('xp').innerText = 'XP: ' + st.xp;
+  // level from xp
+  const level = Math.floor(st.xp / 100) + 1;
+  document.getElementById('level').innerText = 'Level: ' + level;
+  // HP
+  document.getElementById('hpVal').innerText = st.hp;
+  document.getElementById('hpMax').innerText = st.hpMax;
+  document.getElementById('manaVal').innerText = st.mana;
+  document.getElementById('manaMax').innerText = st.manaMax;
+  document.getElementById('hpBar').style.width = (st.hp / st.hpMax * 100) + '%';
+  document.getElementById('manaBar').style.width = (st.mana / st.manaMax * 100) + '%';
+  document.getElementById('streak').innerText = st.streak;
+  updateQuestsUI();
+}
+function addXP(amount) {
+  const st = getState();
+  st.xp += amount;
+  saveState(st);
+  updateDisplay();
+}
+function adjustHPMana(hpDelta, manaDelta) {
+  const st = getState();
+  st.hp = Math.min(st.hpMax, Math.max(0, st.hp + hpDelta));
+  st.mana = Math.min(st.manaMax, Math.max(0, st.mana + manaDelta));
+  saveState(st);
+}
+function updateQuestsUI() {
+  const st = getState();
+  const container = document.getElementById('questsContainer');
+  container.innerHTML = '';
+  if (!st.quests.length) {
+    // initialize default quests
+    st.quests = [
+      { id:'walk', title:'Short Walk', duration:30, completed:false, inProgress:false },
+      { id:'drink', title:'Drink Water', duration:10, completed:false, inProgress:false },
+      { id:'meditate', title:'Meditate', duration:20, completed:false, inProgress:false }
+    ];
+    saveState(st);
+  }
+  st.quests.forEach((q, index) => {
+    const div = document.createElement('div');
+    div.className = 'quest';
+    const status = q.completed ? '\u2705' : (q.inProgress ? '\u23F3' : '');
+    div.innerHTML = '<strong>' + q.title + '</strong> ' + status + '<br/>Duration: ' + q.duration + 's';
+    const btn = document.createElement('button');
+    btn.className = 'button';
+    btn.textContent = q.inProgress ? 'Cancel' : (q.completed ? 'Completed' : 'Start');
+    btn.onclick = () => toggleQuest(index);
+    div.appendChild(btn);
+    if (q.inProgress) {
+      const timerSpan = document.createElement('span');
+      timerSpan.id = 'timer_' + q.id;
+      timerSpan.style.marginLeft = '10px';
+      div.appendChild(timerSpan);
+      startCountdown(index, q.duration);
+    }
+    container.appendChild(div);
+  });
+}
+let countdownIntervals = {};
+function startCountdown(index, seconds) {
+  const st = getState();
+  if (!st.quests[index].remaining) {
+    st.quests[index].remaining = seconds;
+    saveState(st);
+  }
+  const quest = st.quests[index];
+  const timerId = 'timer_' + quest.id;
+  if (countdownIntervals[index]) return;
+  countdownIntervals[index] = setInterval(() => {
+    const s = getState();
+    const q = s.quests[index];
+    if (!q.inProgress) { clearInterval(countdownIntervals[index]); delete countdownIntervals[index]; return; }
+    if (q.remaining <= 0) {
+      q.inProgress = false;
+      q.completed = true;
+      delete q.remaining;
+      saveState(s);
+      clearInterval(countdownIntervals[index]);
+      delete countdownIntervals[index];
+      addXP(50);
+      adjustHPMana(5,5);
+      updateDisplay();
+    } else {
+      q.remaining -= 1;
+      saveState(s);
+      document.getElementById(timerId).innerText = ' [' + q.remaining + 's]';
+    }
+  }, 1000);
+}
+function toggleQuest(index) {
+  const st = getState();
+  const q = st.quests[index];
+  if (q.completed) return;
+  if (q.inProgress) {
+    q.inProgress = false;
+    q.remaining = null;
+    saveState(st);
+    updateDisplay();
+    clearInterval(countdownIntervals[index]);
+    delete countdownIntervals[index];
+  } else {
+    q.inProgress = true;
+    q.remaining = q.duration;
+    saveState(st);
+    updateDisplay();
+    startCountdown(index, q.duration);
+  }
+}
+document.getElementById('checkInBtn').addEventListener('click', () => {
+  // update range display
+  ['energy','clarity','stress'].forEach(id => {
+    const slider = document.getElementById(id);
+    document.getElementById(id+'Val').textContent = slider.value;
+    slider.oninput = () => document.getElementById(id+'Val').textContent = slider.value;
+  });
+  document.getElementById('checkInModal').style.display = 'flex';
+});
+document.getElementById('submitCheckIn').addEventListener('click', () => {
+  const energy = parseInt(document.getElementById('energy').value);
+  const clarity = parseInt(document.getElementById('clarity').value);
+  const stress = parseInt(document.getElementById('stress').value);
+  const st = getState();
+  // update streak: if last check-in is yesterday (different day), streak++ else if same day, keep; else reset.
+  const today = new Date().toDateString();
+  if (st.lastCheckIn !== today) {
+    const lastDate = st.lastCheckIn ? new Date(st.lastCheckIn) : null;
+    if (lastDate) {
+      const diff = (new Date(today) - lastDate) / (1000*60*60*24);
+      if (diff === 1) {
+        st.streak += 1;
+      } else {
+        st.streak = 1;
+      }
+    } else {
+      st.streak = 1;
+    }
+    st.lastCheckIn = today;
+  }
+  // compute xp/hp/mana adjustments
+  const xpGain = energy + clarity + (10 - stress);
+  st.xp += xpGain;
+  st.hp = Math.min(st.hpMax, st.hp + energy - stress/2);
+  st.mana = Math.min(st.manaMax, st.mana + clarity - stress/2);
+  saveState(st);
+  document.getElementById('checkInModal').style.display = 'none';
+  updateDisplay();
+});
+updateDisplay();
+</script>
+</body>
+</html>
